@@ -1,16 +1,17 @@
 # dsh-agent-guard
 
-> **A DSH guardrail plugin that makes reading first-hand evidence the easiest path.**
-> Zero network. Zero telemetry. Zero runtime dependencies. Read-only in v0.
+> **A DSH guardrail plugin that makes reading first-hand evidence the easiest path —
+> and makes writing DSH's private storage the hardest one.**
+> Zero network. Zero telemetry. Zero runtime dependencies.
 
 `dsh-agent-guard` exists because of a real incident: an agent never read the primary
 evidence, mistook a normal design for a defect, and then rewrote the application's own
 private storage — crashing the app. This plugin is the guardrail that incident should
 have hit.
 
-**v0 scope (this release): evidence capture only.** One command produces an authoritative,
-comparable snapshot of DSH state — registered workspaces, session identity headers,
-directory layout, and whether the host is running. It writes nothing.
+**Current scope: evidence capture (v0) + write governance (v1)** — read-only inspection,
+write-time interception with backup-before-allow, and per-turn rollback points. Every claim
+here is backed by first-hand evidence in [`VERIFY.md`](./VERIFY.md).
 
 ---
 
@@ -29,7 +30,7 @@ The root causes, and what this plugin does about them:
 |---|---|---|
 | R1 **Path is identity** | Workspace identity, storage key and session header all key off an absolute path — moving a folder changes identity | Detect and report; never "repair" by inventing a second name |
 | R2 **Summary counts instead of primary evidence** | "Directory count ≠ registry count" is read as data loss | `guard_inspect` reads the first-hand identity header of every session and labels subagent records `countsAsConversation: false` |
-| R3 **Impact budget out of balance** | A display problem is "fixed" by rewriting all core data | Impact-budget rules (v1) refuse core-data writes for display-classified goals |
+| R3 **Impact budget out of balance** | A display problem is "fixed" by rewriting all core data | Impact budget: a `display`-classified goal may not write core data at all |
 | R4 **Uncertainty handed to the user as one double-click** | A destructive script is delivered as a `.bat` | Generating such a script is a flagged action, never a "one-click" deliverable |
 
 ## Install
@@ -38,7 +39,7 @@ The root causes, and what this plugin does about them:
 # From a local checkout (path must be absolute):
 dsh plugin --profile <profile> add <absolute-path-to-this-directory>
 
-# Once published, pin the exact version:
+# From the registry, pinned to an exact version:
 dsh plugin --profile <profile> add dsh-agent-guard@0.1.0
 ```
 
@@ -68,18 +69,33 @@ rm -rf "$DSH_HOME/agent-guard"        # Windows: Remove-Item -Recurse "$env:DSH_
 
 ## Usage
 
-### As a tool (installed)
-
-Ask the agent to inspect DSH state, or call the tool directly:
+### As tools (installed)
 
 ```
 guard_inspect(scope?, workspace?, maxSessions?, includeHeaders?, redact?)
 guard_journal(action?, limit?, snapshot?)
 ```
 
-`guard_journal` shows the guard's own state (enabled, storage mode, hash-chain health,
-rollback points) and the most recent protected operations — **without command text**. Its
-`rollback` action returns *human* rollback instructions; there is no automatic rollback.
+`guard_inspect` produces the evidence report (read-only, writes nothing anywhere).
+`guard_journal` reports the guard's own state: whether it is enabled, whether the journal is
+writable and its hash chain intact, the rollback points, and the most recent protected
+operations. `action: "trace"` shows one operation in detail; the `rollback` action returns
+*human* rollback instructions — there is no automatic rollback.
+
+### Interception (automatic, once installed)
+
+Protected writes are decided at `tools/pre-execute`, where `deny` short-circuits **before**
+the tool body runs. That is the difference between blocking and warning after the fact.
+Defaults:
+
+- a write to DSH core data while DSH is not known to be stopped → **refused** (fail-closed:
+  "cannot determine" counts as running);
+- a permitted protected write → **backup first, then ask**; if the backup fails or exceeds
+  the budget (8 MiB per file by default) → **refused**, never allowed unbacked;
+- two consecutive writes on one path whose checksum changed → **circuit breaker**, handed to
+  a human through the approval channel;
+- a generated `.bat`/`.cmd`/`.ps1`/`.sh` that references a protected path → flagged as
+  `emit-script` and never silently allowed.
 
 ### In the UI
 
@@ -96,10 +112,29 @@ The client half is a hand-written `window.__ModuleLoader__.load` bundle, so this
 **no build step** and adds **no devDependencies**. An equivalent same-origin HTTP panel is
 also served at `/agent-guard` as a fallback for hosts without a client bundle path.
 
+> The official client bundles are built with tsdown; this package hand-writes the **same
+> contract** (`React.createElement` instead of JSX), and unit tests execute the bundle in a
+> controlled sandbox, asserting all three seat registrations and the absence of any write path.
+
+## Screenshots
+
+**None yet — and none will be added unless it comes from a real run.** The rule this project
+follows is the one it asks of others: evidence before claims. A mocked-up UI would be exactly
+the kind of summary-instead-of-evidence this plugin exists to refuse.
+
+| What to capture | Where it comes from |
+|---|---|
+| `1-panel.png` | The sidebar panel or the settings page **after a normal install**, in a session whose workspace contains nothing private |
+| `2-blocked-write.png` | An agent attempting a write to `$DSH_HOME/storages/workspace.json` while DSH is running → the approval/denial message, plus the matching `guard_journal` entry |
+| `3-inspect.png` | `dsh-agent-guard inspect --redact` output — redacted, so it can be published as-is |
+
+Contributions of a screenshot taken this way are welcome; please redact paths, titles and
+session ids first (`--redact` does it for the CLI view).
+
 ### As a standalone CLI (no profile changes at all)
 
-The v0 design goal is that this works **even when DSH will not start** — which is exactly
-when evidence matters most:
+One design goal is that this works **even when DSH will not start** — which is exactly when
+evidence matters most:
 
 ```bash
 dsh-agent-guard inspect                 # human-readable summary
@@ -133,48 +168,62 @@ absence. "Cannot read it" and "it is not there" are different facts.
 
 ## Capabilities and red lines
 
-**What v0 does**
+**What it does**
 
 - reads the workspace registry, session identity headers, directory layout and host state;
-- reports findings with stable codes for scripting and testing;
-- distinguishes user conversations from internal records, and unknown from zero.
+- intercepts writes to protected paths **before** they run: backup first, then allow; a failed
+  backup means the write is refused;
+- appends an append-only journal with a **hash chain** (edits are detectable) and creates a
+  per-turn rollback point, cleaning up only its own snapshots per the retention policy;
+- exposes its own state, recent records and **human** rollback instructions via `guard_journal`;
+- reports findings with stable codes for scripting and testing, and distinguishes user
+  conversations from internal records, and unknown from zero.
 
-**What v0 does NOT do**
+**What it cannot do (and says so)**
 
-- it does not write, move, rename, delete or "repair" anything;
-- it does not create snapshots or journals yet (v1);
-- it does not block anything yet (v1 — see the honest capability notes below).
+| Bypass | Why |
+|---|---|
+| `rename`/`delete` inside `pwsh`/`bash` command text | DSH ships no rename or delete tool, so such commands appear only as opaque text; paths can be extracted but the action cannot be known |
+| Background jobs (`run_in_background`) | The command is handed to the job registry; a foreground call promoted to a job on timeout has already passed the gate |
+| Host terminals (`ctx.terminals`) | A PTY service; it registers no tools |
+| Client / HTTP host APIs | They do not pass through the tool pipeline |
+| A user double-clicking a script; another process writing the same path | The plugin runs inside the host process and cannot govern outside it |
 
-**Red lines (permanent, by design)**
+So the correct claim is "**can block this session's tool calls**", never "blocks all damage".
+
+One performance boundary matters too: `pre-execute` has **no timeout** and runs on a **single
+ordered lane**, so a backup taken there blocks that turn and cannot be cancelled mid-flight.
+The backup budget is therefore deliberately small (8 MiB per file by default; over budget means
+the write is refused).
+
+**Permanent red lines (by design)**
 
 - never writes to `$DSH_HOME/sessions/`, `storages/`, or `profiles/`;
 - never reads the *contents* of the credentials file — existence and metadata only;
 - provides no "one-click repair/migration" for DSH data, ever;
-- no network access, no telemetry, no install hooks;
-- does not ship a double-clickable script that modifies DSH data.
+- does not ship a double-clickable script that modifies DSH data;
+- no network access, no telemetry, no install hooks.
 
-## Honest capability notes (planned for v1)
+## Key design trade-offs
 
-Interception in DSH is real and can hard-block a tool call before it executes. That said,
-this plugin will be honest in its README about what it can and cannot cover:
-
-**Covered:** direct tool calls, MCP tools, PTC (`run_code`) sub-calls, and in-process
-subagents — all pass through one `tools/pre-execute` gate where `deny` short-circuits
-before dispatch.
-
-**Not covered:** `rename`/`delete` performed inside opaque `pwsh`/`bash` command text (DSH
-ships no rename or delete tool, so such commands can only be heuristically parsed);
-background jobs; host terminals; client/HTTP host APIs; and a user double-clicking a
-script. So the correct claim is "can block this session's tool calls", never "blocks all
-damage".
+- **The rule engine is a pure function with no I/O**, so T1–T9 are directly unit-testable
+  without booting the app.
+- **Engine faults fail safe**: degraded to "backup + warn", never to an unbacked allow.
+- **Its own data directory** is `$DSH_HOME/agent-guard/` (configurable). If the sandbox refuses
+  writes it degrades to a temp directory **and says so**; if neither is writable it goes
+  memory-only and states that records will be lost. Degrading is fine, degrading silently is not.
+- **The journal never stores command text** — only a 12-character digest. Commands, message
+  bodies and credentials do not enter the log.
+- **Rollback is human-only**: no automatic rollback command, because automatically rewriting
+  the application's private storage is precisely the incident's shape.
 
 ## Compatibility
 
 | Component | Verified version |
 |---|---|
 | DSH | 0.1.7-rc.2 |
-| Node | ≥ 22 (uses built-in `node:zlib` zstd; verified on 24.x) |
-| Platform | Windows verified; core is path-string only, Windows-specific probes degrade to "unsupported" elsewhere |
+| Node | ≥ 22 (uses built-in `node:zlib` zstd; also exercised on 24.x, and on Linux/macOS/Windows in CI) |
+| Platform | Windows verified in depth; CI runs ubuntu, macOS and Windows on Node 22 and 24. The core is path-string only; Windows-specific probes degrade to "unsupported" elsewhere |
 | Runtime dependencies | **none** |
 
 ## Frequently asked questions
@@ -198,6 +247,10 @@ replaces paths, titles and ids with placeholders if you want to share a report.
 It is reported as `unreadable` or `incomplete` and excluded from the conversation/record
 tally. Unknown is never silently treated as absent.
 
+**How do I remove the plugin's data?**
+After you no longer need the rollback points, delete `$DSH_HOME/agent-guard/` yourself. The
+plugin will not do it for you.
+
 ## Documentation
 
 - [`VERIFY.md`](./VERIFY.md) — every API claim with its first-hand evidence, plus known gaps
@@ -207,6 +260,23 @@ tally. Unknown is never silently treated as absent.
 > The full design document and the release/verification reports are intentionally kept out of
 > this repository: they are working documents tied to the author's local environment.
 > `VERIFY.md` carries the API conclusions that matter to users of this plugin.
+
+## Discovery / how to verify this package yourself
+
+This repository carries the topic **`dsh-plugin`**, which is how the DSH ecosystem finds
+plugins (community plugin directories and the in-app plugin marketplace all index that tag).
+
+Because the plugin governs writes, "trust me" is not a good enough answer — so the checks ship
+**inside the npm package**:
+
+```bash
+npm run checks         # read-only audits: encoding, redaction, isolation, coverage, identity space, CI shape
+npm run publish:check  # release gates: local suite, version/CHANGELOG, package contents, zero deps, name availability
+```
+
+They are zero-dependency and read-only, so you can run them against your own checkout and see
+the same evidence the author sees. `npm run publish:check` prints `✅ / ❌ / ⏳` per gate and
+never claims a pass for anything it could not measure.
 
 ## License
 

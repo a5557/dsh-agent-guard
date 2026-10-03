@@ -74,7 +74,8 @@
 
 ### 自检脚本（随包发布）
 
-`checks/` 下 10 个零依赖自检脚本，可独立运行，也可一次跑 `npm run checks`：
+`checks/` 下 12 个零依赖自检脚本，可独立运行，也可一次跑 `npm run checks`
+（发布前另跑 `npm run publish:check`）：
 
 | 脚本 | 检查什么 |
 |---|---|
@@ -88,6 +89,8 @@
 | `check-release-checklist.mjs` | §20 发布前安全检查逐项机器化验证 |
 | `check-audit-leak.mjs` | 脱敏审计报告本身不复述敏感串 |
 | `final-check.mjs` | 真实驱动两个工具 + 真实 home 只读性 |
+| `path-link.mjs` | 共享工具：建"真的可解析"的目录链接（供上面的检查与测试复用） |
+| `check-publish-ready.mjs` | 发布就绪闸门（`npm run publish:check`）：本地闸门、版本与 CHANGELOG 一致、身份 URL、包内容最小化、零依赖、`dsh.bundle` 契约、npm 登录与重名、公开面无本机路径 |
 
 设计要点：**不硬编码本机路径**（根目录由脚本自身位置推导）；自指检查显式排除自身，
 否则会命中自己写的模式定义。`check-isolation.mjs` 的判据刻意区分

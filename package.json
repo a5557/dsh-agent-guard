@@ -46,6 +46,7 @@
     "test": "node test/run.mjs",
     "inspect": "node bin/guard.mjs inspect",
     "checks": "node checks/check-ci.mjs && node checks/check-encoding.mjs && node checks/check-readonly.mjs && node checks/check-redaction.mjs && node checks/check-isolation.mjs && node checks/check-coverage.mjs && node checks/check-identity-space.mjs && node checks/check-release-checklist.mjs",
+    "publish:check": "node checks/check-publish-ready.mjs",
     "lint": "node --check lib/index.js && node --check lib/inspect.js && node --check lib/rules.js && node --check lib/paths.js && node --check lib/sessionlog.js && node --check lib/hostcheck.js && node --check lib/encoding.js && node --check lib/store.js && node --check lib/journal.js && node --check lib/backup.js && node --check lib/guard.js && node --check lib/snapshot.js && node --check lib/config.js && node --check lib/panel.js && node --check lib/client.js && node --check bin/guard.mjs",
     "prepublishOnly": "npm run lint && npm test"
   },

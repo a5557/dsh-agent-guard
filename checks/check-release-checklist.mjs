@@ -332,7 +332,7 @@ function inspectGit() {
 
 add('20-4', 'git log --stat 无 ~/.dsh 拷贝、无 journal/快照', 'manual',
   '需推送后按提交历史抽查；本地另有隔离检查（check-isolation.mjs）守住工作区不被污染')
-add('20-7', '截图/GIF 来自合成数据', 'n/a', '本版本不含任何截图或 GIF（§19.5 最硬的红线，宁可不放）')
+add('20-7', '截图/GIF 来自合成数据', 'n/a', '不含任何截图或 GIF；README 已写明"只接受真实运行出来的截图"及获取方式（§19.5 最硬的红线，宁可不放）')
 add('20-13', '干净 profile 安装→使用→卸载全流程', 'pass',
   '已在隔离 DSH_HOME 中完成（安装→挂载→配置发现→卸载→条目集合比对）')
 add('20-6', 'npm pack 内容最小化', 'pass', '由 CI 的 pack job 断言；本地实测见 `npm pack --dry-run`')

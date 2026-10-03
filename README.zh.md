@@ -85,6 +85,19 @@ dsh-agent-guard inspect --scope workspaces,processes
 > 说明：官方 client bundle 由 tsdown 构建，本包按**同一契约手写**（用 `React.createElement`
 > 代替 JSX），并由单测在受控沙箱里真实执行、断言三个席位的注册形态与"无写入口"。
 
+## 截图
+
+**目前没有，而且只接受真实运行出来的截图。** 本项目的规矩和它要求别人的一样：先有证据，
+再下结论。用示意图代替真实界面，正是这个插件存在的意义所要拒绝的那种"用汇总代替一手证据"。
+
+| 建议截什么 | 来源 |
+|---|---|
+| `1-panel.png` | 正常安装后，在**不含私人内容**的工作区会话里，打开侧边栏面板或设置页 |
+| `2-blocked-write.png` | DSH 运行中，agent 尝试写 `$DSH_HOME/storages/workspace.json` → 审批/拒绝提示，以及 `guard_journal` 里对应那条记录 |
+| `3-inspect.png` | `dsh-agent-guard inspect --redact` 的输出（已脱敏，可直接公开） |
+
+欢迎按这个方式贡献截图；公开前请先脱敏（CLI 视图用 `--redact` 即可）。
+
 ## 输出长什么样
 
 ```
