@@ -202,8 +202,11 @@ tally. Unknown is never silently treated as absent.
 
 - [`VERIFY.md`](./VERIFY.md) — every API claim with its first-hand evidence, plus known gaps
 - [`IMPLEMENTATION-PLAN.md`](./IMPLEMENTATION-PLAN.md) — scope, module layout, acceptance criteria
-- [`DESIGN.md`](./DESIGN.md) — the full design document
 - [`docs/incident-redacted.md`](./docs/incident-redacted.md) — the incident, mechanism only
+
+> The full design document and the release/verification reports are intentionally kept out of
+> this repository: they are working documents tied to the author's local environment.
+> `VERIFY.md` carries the API conclusions that matter to users of this plugin.
 
 ## License
 

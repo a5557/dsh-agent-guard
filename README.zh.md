@@ -181,9 +181,10 @@ dsh-agent-guard inspect --scope workspaces,processes
 
 - [`VERIFY.md`](./VERIFY.md) — 每条 API 结论与一手证据，以及已知缺口
 - [`IMPLEMENTATION-PLAN.md`](./IMPLEMENTATION-PLAN.md) — 范围、模块划分、验收判据
-- [`DESIGN.md`](./DESIGN.md) — 完整设计文档
 - [`docs/incident-redacted.md`](./docs/incident-redacted.md) — 事故复盘（脱敏，只讲机制）
-- [`V0-REPORT.md`](./V0-REPORT.md) — v0 阶段复核报告
+
+> 完整设计文档与发布/验收报告**刻意不放进本仓库**：它们是绑定了作者本机环境的工作文档。
+> 使用本插件所需的关键结论都在 `VERIFY.md` 里。
 
 ## 许可证
 
