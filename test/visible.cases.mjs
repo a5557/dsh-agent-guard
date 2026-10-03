@@ -215,7 +215,13 @@ test('toEngineDshState 把 unknown 映射为「未停止」（fail-closed，§6.
 })
 
 test('probeFileLock 对不存在的文件报「未占用」，对非法输入报「不确定」', () => {
-  const missing = probeFileLock('Z:\\definitely\\not\\here.txt')
+  // Must be absolute **on this platform**: `Z:\...` is not absolute on Linux, so it
+  // falls into the "invalid input" branch and returns 'unknown' instead of false.
+  // The three-platform CI run caught exactly this (visible.cases.mjs:219).
+  const missingPath = process.platform === 'win32'
+    ? 'Z:\\definitely\\not\\here.txt'
+    : '/definitely/not/here.txt'
+  const missing = probeFileLock(missingPath)
   assert.equal(missing.locked, false, '文件不存在就没有占用可言')
   const relative = probeFileLock('relative/path.txt')
   assert.equal(relative.locked, 'unknown', '非绝对路径判不了占用，必须报 unknown')

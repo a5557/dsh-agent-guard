@@ -7,7 +7,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { buildEngine } from '../lib/index.js'
@@ -459,7 +459,15 @@ test('快照开关关闭时不写任何东西', () => {
     const scheduler = new SnapshotScheduler({ store, dshHome: temp.home, config })
     const result = scheduler.run({ reason: 'turn-start' })
     assert.equal(result.skipped, true)
-    assert.equal(store.sizeOf('snapshots'), 0)
+    assert.equal(store.sizeOf('snapshots'), 0, 'sizeOf 只报文件字节，目录报 0')
+    // 更强的断言：快照目录里不该出现任何**条目**。
+    // store 初始化时会建出 snapshots/ 目录，所以判断依据是"空"，而不是"不存在"。
+    // 补这一条是因为原先只查 sizeOf，而 sizeOf 对目录的返回值在 POSIX 上是 4096
+    // （文件系统块大小）、Windows 上是 0 —— 那个断言曾在 Windows 上"通过"，
+    // 实际并没有验证到"没写东西"。
+    const snapshotDir = join(temp.home, 'agent-guard', 'snapshots')
+    const entries = existsSync(snapshotDir) ? readdirSync(snapshotDir) : []
+    assert.equal(entries.length, 0, `快照目录应为空，实际有 ${entries.length} 项`)
   } finally {
     temp.cleanup()
   }
