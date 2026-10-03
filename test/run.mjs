@@ -1,19 +1,34 @@
 /**
  * In-process test entry point.
  *
- * Why not `node --test <glob>`: that mode spawns one child process per test file
- * with piped stdio, which a confined file sandbox refuses (`spawn EPERM`). Running
- * the same suites in process keeps the tests runnable in both confinement modes and
- * in CI, and removes process-startup overhead.
+ * ## Why the suites are passed to the runner instead of imported here
+ *
+ * This file used to `import` every suite and then call `run({ files: [] })`, counting
+ * `test:pass` / `test:fail` on the returned stream. Both halves of that were wrong on
+ * modern Node:
+ *
+ * - `files: []` is an EMPTY run -- zero files, zero tests. The suites did run (the
+ *   process-level harness reported them), but not through this stream, so the counter
+ *   could never see them and printed "0 passed, 0 failed" in all six CI jobs.
+ * - The stream from an empty run carries only `test:plan` / `test:diagnostic` /
+ *   `test:summary`, so even a correct listener had nothing to count.
+ *
+ * Passing the files explicitly with `isolation: 'none'` runs them IN this process (no
+ * child spawn, which a confined file sandbox refuses with `EPERM`) and yields real
+ * per-case events plus an authoritative `test:summary`. A test harness that reports a
+ * verdict it did not measure is worse than one that reports nothing, so the count now
+ * comes from events this file actually received; if none arrive, the run fails loudly.
+ *
+ * `isolation: 'none'` requires Node >= 22.8; `engines` pins the whole package at >= 22.
  *
  * Run directly (`node test/run.mjs`) or through the package script (`npm test`).
  */
 
 import { run } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
-// Suite modules register their cases at import time, so importing them first means
-// every test exists before the runner starts.
-const suites = [
+// Import order is the run order; each suite registers its cases at load time.
+const SUITES = [
   'rules.cases.mjs',
   'inspect.cases.mjs',
   'paths.cases.mjs',
@@ -26,28 +41,26 @@ const suites = [
   'assembly.cases.mjs',
   'visible.cases.mjs',
 ]
-for (const suite of suites) {
-  await import(new URL(`./${suite}`, import.meta.url).href)
-}
+const files = SUITES.map((suite) => fileURLToPath(new URL(`./${suite}`, import.meta.url)))
 
-const failures = []
 let passed = 0
-// `files: []` is load-bearing: without it the runner falls back to file discovery,
-// which spawns a child per file and fails under confinement. The suites are already
-// registered in this process by the imports above.
-const stream = run({ concurrency: 1, files: [] })
+const failures = []
+let summaryCounts = null
 
-stream.on('test:pass', (event) => {
-  if (event.skip === true) return
-  passed += 1
-})
-stream.on('test:fail', (event) => {
-  const error = event.details?.error
-  failures.push({
-    name: event.name,
-    message: error?.message ?? String(error ?? 'unknown failure'),
-    stack: typeof error?.stack === 'string' ? error.stack : null,
-  })
+const stream = run({ concurrency: 1, files, isolation: 'none' })
+stream.on('data', (event) => {
+  if (event.type === 'test:pass' && event.data?.skip !== true) {
+    passed += 1
+  } else if (event.type === 'test:fail') {
+    failures.push({
+      name: event.data?.name ?? '<unnamed>',
+      message: event.data?.details?.error?.message ?? event.data?.details?.error?.cause?.message ?? 'unknown failure',
+      file: event.data?.file ?? null,
+      line: event.data?.line ?? null,
+    })
+  } else if (event.type === 'test:summary') {
+    summaryCounts = event.data?.counts ?? null
+  }
 })
 
 // `run()`'s stream ends rather than closes; awaiting "finished" would hang, so wait
@@ -57,18 +70,21 @@ await new Promise((resolve) => {
   stream.resume()
 })
 
-for (const failure of failures) {
-  process.stdout.write(`\nFAIL ${failure.name}\n  ${failure.message}\n`)
-  if (failure.stack !== null) {
-    const frames = failure.stack
-      .split('\n')
-      .filter((line) => line.includes('.mjs'))
-      .slice(0, 4)
-      .join('\n')
-    if (frames.length > 0) process.stdout.write(`${frames}\n`)
+// The runner does not touch `process.exitCode`, so a failing run must set it here.
+if ((summaryCounts?.passed ?? passed) === 0 && failures.length === 0) {
+  process.stdout.write(
+    '\nUNKNOWN: the test runner completed without reporting a single case.\n'
+    + 'Treat this run as failed: a harness that cannot read its own verdict must not\n'
+    + 'print "0 failed". Check that `isolation: \'none\'` ran the suites in process.\n',
+  )
+  process.exitCode = 1
+} else {
+  for (const failure of failures) {
+    const where = failure.file === null ? '' : ` (${failure.file}${failure.line === null ? '' : `:${failure.line}`})`
+    process.stdout.write(`\nFAIL ${failure.name}${where}\n  ${failure.message}\n`)
   }
+  const failed = summaryCounts?.failed ?? failures.length
+  const total = summaryCounts?.tests ?? passed + failed
+  process.stdout.write(`\n${passed} passed, ${failed} failed (${total} cases)\n`)
+  process.exitCode = failed === 0 ? 0 : 1
 }
-
-const failed = failures.length
-process.stdout.write(`\n${passed} passed, ${failed} failed\n`)
-process.exitCode = failed === 0 ? 0 : 1

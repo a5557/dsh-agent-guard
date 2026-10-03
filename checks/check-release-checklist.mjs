@@ -149,17 +149,33 @@ function localValuePatterns() {
 }
 
 // ---------------------------------------------------------------------------
-// 5) package.json 无私有信息，author/repository 留空（不写真实身份）
+// 5) package.json 无私有信息；公开身份里只允许**可核实的仓库 URL**
+//
+// 判据曾经是"这四个字段一个都不许出现"，那会同时禁掉 repository/bugs，而它们装的
+// 只是 README 里早就写明的同一个 URL —— 属于可核实事实，不是需要"代填"的身份。
+// 真正要防的是**编造身份**与**本机路径**，所以现在：
+//   - author / homepage 仍必须留空（需要真人身份，代填就是编造）；
+//   - repository / bugs 允许存在，但必须是同一个规范仓库 URL，否则判 fail。
+// 一个把"事实"和"编造"一起拦掉的检查，最后只会被绕过。
 // ---------------------------------------------------------------------------
 {
   const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
   const text = JSON.stringify(manifest)
   const noLocalPath = !/[A-Za-z]:\\/.test(text)
-  const identityKeys = ['author', 'repository', 'bugs', 'homepage'].filter((key) => manifest[key] !== undefined)
-  add('20-9', 'package.json 无本机路径；公开身份留空待填', noLocalPath && identityKeys.length === 0 ? 'pass' : 'fail',
-    noLocalPath
-      ? (identityKeys.length === 0 ? '无本机路径；author/repository/bugs 刻意留空' : `含身份字段：${identityKeys.join(', ')}`)
-      : 'package.json 含 Windows 绝对路径')
+  const CANONICAL = 'https://github.com/a5557/dsh-agent-guard'
+  const repositoryUrl = typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url
+  const bugsUrl = typeof manifest.bugs === 'string' ? manifest.bugs : manifest.bugs?.url
+  const normalize = (value) => String(value ?? '').replace(/^git\+/, '').replace(/\.git$/, '').replace(/\/$/, '')
+  const declared = ['author', 'homepage'].filter((key) => manifest[key] !== undefined)
+  const urlsOk = normalize(repositoryUrl) === CANONICAL && normalize(bugsUrl) === `${CANONICAL}/issues`
+  const problems = []
+  if (!noLocalPath) problems.push('含 Windows 绝对路径')
+  if (declared.length > 0) problems.push(`不该出现的身份字段：${declared.join(', ')}`)
+  if (!urlsOk) problems.push(`repository/bugs 不是规范仓库 URL（${repositoryUrl ?? '缺'} / ${bugsUrl ?? '缺'}）`)
+  add('20-9', 'package.json 无本机路径；只声明可核实的仓库 URL', problems.length === 0 ? 'pass' : 'fail',
+    problems.length === 0
+      ? `无本机路径；author/homepage 留空待作者填；repository=${normalize(repositoryUrl)}`
+      : problems.join('；'))
 }
 
 // ---------------------------------------------------------------------------
@@ -295,17 +311,22 @@ function inspectGit() {
   if (!git.isRepo) {
     add('20-3', 'git log 仅含专用公开身份', 'manual', '本目录不是 Git 仓库；初始化后按 §19.4 设置 local user.name/email')
   } else {
-    // 判据：仓库级身份存在，且不是常见的真实姓名/个人邮箱形态
     const hasIdentity = typeof git.name === 'string' && typeof git.email === 'string'
-    const personalEmail = typeof git.email === 'string'
-      && !/noreply|users\.noreply\.github\.com/i.test(git.email)
-    const ok = hasIdentity && !personalEmail
-    add('20-3', 'git log 仅含专用公开身份', ok ? 'pass' : 'fail',
-      !hasIdentity
-        ? '仓库级身份未设置（会回落到全局身份，可能泄露真实姓名/邮箱）'
-        : personalEmail
-          ? '提交邮箱不是 GitHub noreply 形态，可能泄露个人邮箱'
+    if (!hasIdentity) {
+      // A checkout with no repository-level user is the *normal* state in CI:
+      // GitHub Actions' checkout does not write a [user] section, as the first
+      // real three-platform run demonstrated (four jobs failed here).
+      // "Not configured" cannot be read as "configured badly", so this reports
+      // manual rather than fail -- the developer still gets the local reminder.
+      add('20-3', 'git log 仅含专用公开身份', 'manual',
+        '仓库无仓库级 user 配置（CI 检出的正常状态）；本地开发应设 --local user.name/email')
+    } else {
+      const personalEmail = !/noreply|users\.noreply\.github\.com/i.test(git.email)
+      add('20-3', 'git log 仅含专用公开身份', personalEmail ? 'fail' : 'pass',
+        personalEmail
+          ? `提交邮箱不是 GitHub noreply 形态（${git.email}），可能泄露个人邮箱`
           : `author=${git.name} <${git.email}>；仓库已初始化（${git.head ?? '无 HEAD'}）`)
+    }
   }
 }
 

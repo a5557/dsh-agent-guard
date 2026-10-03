@@ -1,7 +1,7 @@
 {
   "name": "dsh-agent-guard",
   "version": "0.1.0",
-  "description": "DeepSeek Harness guardrail plugin: evidence-first read-only inspection (v0). One command captures authoritative state - workspace registration, session identity headers, directory layout, host running state - so a count difference is never mistaken for data loss. No network, no telemetry, zero runtime dependencies.",
+  "description": "DeepSeek Harness guardrail plugin: evidence-first read-only inspection plus write-time protection of DSH private storage. One command captures authoritative state - workspace registration, session identity headers, directory layout, host running state - so a count difference is never mistaken for data loss; writes to protected paths are intercepted before dispatch, backed up first, and never allowed while the host may still be running. No network, no telemetry, zero runtime dependencies.",
   "keywords": [
     "deepseek-harness",
     "dsh",
@@ -56,6 +56,13 @@
     "client": {
       "platform": "web"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/a5557/dsh-agent-guard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/a5557/dsh-agent-guard/issues"
   },
   "license": "MIT"
 }

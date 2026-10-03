@@ -101,15 +101,36 @@ jobs:
         uses: actions/checkout@v4
 
       # §19.7「零网络」不是口号：在发布产物里直接搜网络 API 与 HTTP 客户端依赖。
+      #
+      # 判据分三层，**不能简单地把 `fetch(` 一律当违规**：客户端面板需要同源请求
+      # `/agent-guard/api`，而那是由本插件自己的宿主路由提供的 —— 同源、不出机。
+      # 最初的检查把所有 `fetch(` 都算作"出网"，于是把 lib/client.js 与
+      # lib/panel.js 误报成违规。那是判据写错，不是代码有问题（三平台 CI 首次实跑
+      # 才把它暴露出来）。真正的判据是：是否存在绝对 URL、网络模块或 HTTP 客户端库。
       - name: Assert no network usage
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RnE "require\(['\"](node:)?(http|https|net|dns|tls)['\"]\)|from ['\"](node:)?(http|https|net|dns|tls)['\"]|fetch\(|XMLHttpRequest|axios|node-fetch|undici" lib/ bin/; then
-            echo "::error::network API found in shipped code — the zero-network promise is broken"
+
+          # 1) 网络模块：任何形式都不允许
+          if grep -RnE "(require|from)[[:space:]]*\(?['\"](node:)?(http|https|net|dns|tls|dgram)['\"]" lib/ bin/; then
+            echo "::error::network module imported in shipped code — the zero-network promise is broken"
             exit 1
           fi
-          echo "no network API in lib/ or bin/"
+
+          # 2) HTTP 客户端库与浏览器网络 API：不允许
+          if grep -RnE "axios|node-fetch|undici|XMLHttpRequest" lib/ bin/; then
+            echo "::error::HTTP client referenced in shipped code — the zero-network promise is broken"
+            exit 1
+          fi
+
+          # 3) fetch 只允许同源相对路径；绝对 URL 一律不允许
+          if grep -RnE "fetch\([[:space:]]*[\`'\"]https?:" lib/ bin/; then
+            echo "::error::fetch to an absolute URL found — the zero-network promise is broken"
+            exit 1
+          fi
+
+          echo "no outbound network capability in lib/ or bin/ (same-origin fetch allowed)"
 
       - name: Assert zero runtime dependencies
         shell: bash
