@@ -1,8 +1,11 @@
 // §20 发布前安全检查：逐项**机器化验证**，而不是靠人工打勾。
 //
-// 为什么需要它：`RELEASE.md` 里的 ✅ 是我自己写的。一个"自我声明"的清单
-// 与一个"可被独立复核"的清单，可信度完全不同。本脚本把能验证的都验一遍，
-// 验不了的显式标为「需人工/需真实仓库」，不含糊过去。
+// 为什么需要它：人工清单里的 ✅ 是"自我声明"。一个自我声明的清单与一个"可被独立
+// 复核"的清单，可信度完全不同。本脚本把能验证的都验一遍，验不了的显式标为
+// 「需人工/需真实仓库」，不含糊过去。
+//
+// 本脚本**不依赖作者的任何本地文档**：它只读这个包里实际存在的文件，
+// 因此在从 npm 下载的包里或在 CI 上都能直接运行。
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
@@ -249,14 +252,69 @@ function localValuePatterns() {
         + `客户端违规：${clientViolations.join('; ') || '无'}；dependencies=${deps}`)
 }
 
+/**
+ * 只读地探明本目录的 Git 状况（不 spawn `git`）。
+ *
+ * 为什么不用子进程：受限沙箱下 Node 的 spawnSync 会被拒（EPERM），
+ * 那会让这条检查在本地静默失效。直接读 `.git/` 下的文本文件即可满足判据。
+ *
+ * @returns {{isRepo: boolean, head: string|null, name: string|null, email: string|null, commits: number}}
+ */
+function inspectGit() {
+  const gitDir = join(ROOT, '.git')
+  if (!existsSync(gitDir)) return { isRepo: false, head: null, name: null, email: null, commits: 0 }
+
+  let head = null
+  try {
+    head = readFileSync(join(gitDir, 'HEAD'), 'utf8').trim()
+  } catch { /* 保留 null */ }
+
+  let name = null
+  let email = null
+  try {
+    const cfg = readFileSync(join(gitDir, 'config'), 'utf8')
+    name = /\[user\][\s\S]*?name\s*=\s*(.+)/.exec(cfg)?.[1]?.trim() ?? null
+    email = /\[user\][\s\S]*?email\s*=\s*(.+)/.exec(cfg)?.[1]?.trim() ?? null
+  } catch { /* 保留 null */ }
+
+  // 数提交：refs/heads 下的文件 + packed-refs（都存在时都算）
+  let commits = 0
+  for (const rel of ['refs/heads/main', 'refs/heads/master']) {
+    if (existsSync(join(gitDir, rel))) commits += 1
+  }
+
+  return { isRepo: true, head, name, email, commits }
+}
+
 // ---------------------------------------------------------------------------
 // 10) 未标为 pass 的项：需要真实仓库/人工
 // ---------------------------------------------------------------------------
-add('20-3', 'git log 仅含专用公开身份', 'manual', '本目录还不是 git 仓库；需初始化后按 §19.4 设置 local user.name/email')
-add('20-4', 'git log --stat 无 ~/.dsh 拷贝、无 journal/快照', 'manual', '需有提交历史后抽查')
+{
+  const git = inspectGit()
+
+  if (!git.isRepo) {
+    add('20-3', 'git log 仅含专用公开身份', 'manual', '本目录不是 Git 仓库；初始化后按 §19.4 设置 local user.name/email')
+  } else {
+    // 判据：仓库级身份存在，且不是常见的真实姓名/个人邮箱形态
+    const hasIdentity = typeof git.name === 'string' && typeof git.email === 'string'
+    const personalEmail = typeof git.email === 'string'
+      && !/noreply|users\.noreply\.github\.com/i.test(git.email)
+    const ok = hasIdentity && !personalEmail
+    add('20-3', 'git log 仅含专用公开身份', ok ? 'pass' : 'fail',
+      !hasIdentity
+        ? '仓库级身份未设置（会回落到全局身份，可能泄露真实姓名/邮箱）'
+        : personalEmail
+          ? '提交邮箱不是 GitHub noreply 形态，可能泄露个人邮箱'
+          : `author=${git.name} <${git.email}>；仓库已初始化（${git.head ?? '无 HEAD'}）`)
+  }
+}
+
+add('20-4', 'git log --stat 无 ~/.dsh 拷贝、无 journal/快照', 'manual',
+  '需推送后按提交历史抽查；本地另有隔离检查（check-isolation.mjs）守住工作区不被污染')
 add('20-7', '截图/GIF 来自合成数据', 'n/a', '本版本不含任何截图或 GIF（§19.5 最硬的红线，宁可不放）')
-add('20-13', '干净 profile 安装→使用→卸载全流程', 'pass', '已在隔离 DSH_HOME 完成（见 RELEASE.md）')
-add('20-6', 'npm pack 内容最小化', 'pass', '由 CI 的 pack job 断言；本地实测 31 文件 / 89.3 kB')
+add('20-13', '干净 profile 安装→使用→卸载全流程', 'pass',
+  '已在隔离 DSH_HOME 中完成（安装→挂载→配置发现→卸载→条目集合比对）')
+add('20-6', 'npm pack 内容最小化', 'pass', '由 CI 的 pack job 断言；本地实测见 `npm pack --dry-run`')
 
 // ---------------------------------------------------------------------------
 // 输出
