@@ -13,16 +13,16 @@
 //
 // 动态半场在没有链接能力的环境（受限沙箱、无 Developer Mode 的 Windows）会显式跳过并说明，
 // 不会伪装成通过；静态半场在任何环境都跑。
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
 
 import { buildEngine } from '../lib/index.js'
 import { classifyTarget, detectEmittedScript } from '../lib/rules.js'
 import { describePath, normalizeForCompare, resolvePhysical, resolveReal } from '../lib/paths.js'
 import { guardInspect } from '../lib/inspect.js'
+import { linkThatResolves } from './path-link.mjs'
 
 const ROOT = resolve(fileURLToPath(import.meta.url), '..', '..')
 const LIB = join(ROOT, 'lib')
@@ -73,13 +73,10 @@ say('[2] 动态：目录链接下的身份一致性')
 
 const realRoot = mkdtempSync(join(tmpdir(), 'idspace-'))
 const linkRoot = `${realRoot}-link`
-let linked = false
-try {
-  symlinkSync(realRoot, linkRoot, 'junction')
-  linked = normalizeForCompare(realpathSync.native(linkRoot)) !== normalizeForCompare(linkRoot)
-} catch {
-  linked = false
-}
+// 能力探测必须发生在**任何断言之前**：如果这个链接解析不到目标，那这一整套
+// "两种拼写判成同一个身份"的断言都会在什么都没验证的情况下通过——本检查的第一版
+// 就在 CI 上这样绿过一次（macOS/Windows runner 建链接被拒），所以现在一律显式跳过。
+const linked = linkThatResolves(realRoot, linkRoot)
 
 if (!linked) {
   notes.push('本环境建不出可解析的目录链接：动态半场已跳过（静态半场仍然有效）')
@@ -129,23 +126,27 @@ if (!linked) {
 
   // 取证面：注册路径的**末尾**就是链接时，必须报成 reparse point（这是审计查出的真实缺口：
   // Windows 的 junction 不会被 lstat 报成符号链接，只靠 link 标志会当成普通目录）。
-  const registryHome = join(realRoot, 'reg-home')
-  mkdirSync(join(registryHome, 'storages'), { recursive: true })
-  mkdirSync(join(registryHome, 'sessions'), { recursive: true })
   const linkWorkspace = join(linkRoot, 'wslink')
-  symlinkSync(physicalWorkspace, linkWorkspace, 'junction')
-  const table = {
-    unit: { name: 'workspace', version: 2 },
-    global: { initialized: true, workspaceIds: ['ws-link'], archivedSessionIds: [] },
-    tables: { workspaces: { 'ws-link': { path: linkWorkspace, title: 'probe', sessionIds: [], createdAt: 0, updatedAt: 0 } } },
+  if (!linkThatResolves(physicalWorkspace, linkWorkspace)) {
+    notes.push('工作区根那一项需要第二个链接：本环境建不出来，已跳过')
+    say('  ➖ 跳过：以链接为工作区根（本环境建不出第二个链接）')
+  } else {
+    const registryHome = join(realRoot, 'reg-home')
+    mkdirSync(join(registryHome, 'storages'), { recursive: true })
+    mkdirSync(join(registryHome, 'sessions'), { recursive: true })
+    const table = {
+      unit: { name: 'workspace', version: 2 },
+      global: { initialized: true, workspaceIds: ['ws-link'], archivedSessionIds: [] },
+      tables: { workspaces: { 'ws-link': { path: linkWorkspace, title: 'probe', sessionIds: [], createdAt: 0, updatedAt: 0 } } },
+    }
+    writeFileSync(join(registryHome, 'storages', 'workspace.json'), JSON.stringify(table), 'utf8')
+    const report = guardInspect({ dshHome: registryHome, scope: ['workspaces'], includeHeaders: false })
+    const row = report.workspaces[0]
+    check('以链接为工作区根时被识别为 reparse point 并报 error',
+      row !== undefined && (row.kind === 'junction' || row.kind === 'symlink') && row.realPathMatches === false
+      && report.findings.some((finding) => finding.code === 'reparse-point-in-workspace'),
+      `kind=${row?.kind} realPathMatches=${row?.realPathMatches}`)
   }
-  writeFileSync(join(registryHome, 'storages', 'workspace.json'), JSON.stringify(table), 'utf8')
-  const report = guardInspect({ dshHome: registryHome, scope: ['workspaces'], includeHeaders: false })
-  const row = report.workspaces[0]
-  check('以链接为工作区根时被识别为 reparse point 并报 error',
-    row !== undefined && (row.kind === 'junction' || row.kind === 'symlink') && row.realPathMatches === false
-    && report.findings.some((finding) => finding.code === 'reparse-point-in-workspace'),
-    `kind=${row?.kind} realPathMatches=${row?.realPathMatches}`)
 }
 
 rmSync(linkRoot, { recursive: true, force: true })
