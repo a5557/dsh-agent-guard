@@ -8,10 +8,13 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { buildEngine } from '../lib/index.js'
 import { classify, classifySafely, DECISIONS } from '../lib/rules.js'
+import { IS_WINDOWS, normalizeForCompare } from '../lib/paths.js'
 
 const DSH_HOME = join('C:', 'fixture-dsh-home')
 const WORKSPACE = join('C:', 'fixture-dsh-home', 'workspaces', 'proj')
@@ -253,4 +256,130 @@ test('classification is deterministic for identical inputs', () => {
   const a = classify('write', [join(DSH_HOME, 'storages', 'workspace.json')], ctx)
   const b = classify('write', [join(DSH_HOME, 'storages', 'workspace.json')], ctx)
   assert.deepEqual(a, b)
+})
+
+// ---------------------------------------------------------------------------
+// Protected-path identity when part of the path is a reparse point.
+//
+// `classifyTarget` matches a target's PHYSICAL path (`realpathSync`), so if the
+// protected table is compiled from the logical `$DSH_HOME`, any ancestor that is a
+// reparse point makes every entry miss -- and a miss means "allow a core-data write".
+//
+// This is not hypothetical: macOS `os.tmpdir()` is `/var/folders/…` and `/var` is
+// an absolute symlink to `/private/var`, so `realpathSync` rewrote every fixture
+// path while `$DSH_HOME` kept the logical one. Ubuntu and Windows runners have real
+// `/tmp` and `%TEMP%`, so the three-platform matrix failed exactly and only on
+// macOS, in every case that asserts a denial. The link below recreates that shape
+// on any platform, so the regression cannot come back quietly.
+// ---------------------------------------------------------------------------
+/** Link a directory to `linkPath`, preferring `type` (a junction needs no elevation). */
+function linkDirectory(target, linkPath, type) {
+  try {
+    symlinkSync(target, linkPath, type)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Create a directory link that this runtime actually RESOLVES, or return false.
+ *
+ * "does not resolve" is not a detail that may be skipped silently: on Windows a
+ * junction created by `fs.symlinkSync(..., 'junction')` is followed by
+ * `fs.realpathSync.native` but not by `fs.realpathSync`, and a directory symlink
+ * needs Developer Mode. This check makes the difference visible (the case skips
+ * with a reason) instead of letting a link-shaped plain directory masquerade as a
+ * passing regression test -- which is how a test quietly stops testing anything.
+ *
+ * @param {string} target - directory the link should point at.
+ * @param {string} linkPath - path of the link to create.
+ * @returns {boolean} whether a resolvable link now exists at `linkPath`.
+ */
+function linkThatResolves(target, linkPath) {
+  const { realpathSync } = process.getBuiltinModule('node:fs')
+  const types = IS_WINDOWS ? ['junction', 'dir'] : ['dir']
+  for (const type of types) {
+    // A leftover entry from a failed attempt would make the next one fail with EEXIST.
+    rmSync(linkPath, { recursive: true, force: true })
+    if (!linkDirectory(target, linkPath, type)) continue
+    try {
+      if (normalizeForCompare(realpathSync.native(linkPath)) !== normalizeForCompare(linkPath)) return true
+    } catch {
+      // Unresolvable link: fall through to the next type.
+    }
+  }
+  rmSync(linkPath, { recursive: true, force: true })
+  return false
+}
+
+test('protected identity survives a symlinked path component (macOS /var shape)', (t) => {
+  const realRoot = mkdtempSync(join(tmpdir(), 'dsh-guard-link-'))
+  t.after(() => rmSync(realRoot, { recursive: true, force: true }))
+
+  // A distinct name, so the logical path genuinely differs from the physical one
+  // even on systems without a `var -> /private/var` style indirection.
+  const linkRoot = `${realRoot}-link`
+  // A junction is a reparse point too, and unlike a symlink it needs no elevation on
+  // Windows -- so this case actually runs on every platform instead of skipping.
+  if (!linkThatResolves(realRoot, linkRoot)) {
+    t.skip('this runtime cannot create a directory link it resolves: the regression cannot be reproduced here')
+    return
+  }
+  t.after(() => rmSync(linkRoot, { recursive: true, force: true }))
+
+  const physicalHome = join(realRoot, 'home')
+  const logicalHome = join(linkRoot, 'home')
+  for (const dir of ['sessions', 'storages']) mkdirSync(join(physicalHome, dir), { recursive: true })
+  const physicalWorkspace = join(physicalHome, 'workspaces', 'proj')
+  mkdirSync(join(physicalWorkspace, 'src'), { recursive: true })
+
+  assert.notEqual(logicalHome, physicalHome, 'the fixture must actually exercise the link')
+
+  // The engine is built from the path shape a caller has in hand (logical), exactly
+  // as the host hands `$DSH_HOME` to the plugin.
+  const engine = buildEngine({ dshHome: logicalHome, workspaceRoots: [logicalHome] })
+
+  const coreData = classify('write', [join(logicalHome, 'storages', 'workspace.json')], {
+    engine,
+    dshState: { running: true },
+  })
+  assert.equal(coreData.classification.protected, true, 'a core-data write must be classified through the link')
+  assert.equal(coreData.kind, 'blocked', 'DSH running + core data through a link must still be denied')
+
+  // A reparse point inside a protected directory must not be a way around the table
+  // either: `proj/public` points INTO the protected home.
+  assert.equal(linkThatResolves(physicalHome, join(physicalWorkspace, 'public')), true, 'the inner link must resolve')
+  const viaReparsePoint = classify('write', [join(logicalHome, 'workspaces', 'proj', 'public', 'storages', 'x')], {
+    engine,
+    dshState: { running: true },
+  })
+  assert.equal(viaReparsePoint.classification.protected, true, 'a link into protected data must not smuggle a write past the table')
+  assert.equal(viaReparsePoint.kind, 'blocked', 'and the write itself must still be denied')
+})
+
+test('a linked path that leads OUTSIDE the protected data stays workspace data', (t) => {
+  const realRoot = mkdtempSync(join(tmpdir(), 'dsh-guard-plain-'))
+  t.after(() => rmSync(realRoot, { recursive: true, force: true }))
+
+  const linkRoot = `${realRoot}-link`
+  if (!linkThatResolves(realRoot, linkRoot)) {
+    t.skip('this runtime cannot create a directory link it resolves: the regression cannot be reproduced here')
+    return
+  }
+  t.after(() => rmSync(linkRoot, { recursive: true, force: true }))
+
+  const home = join(linkRoot, 'home')
+  const outside = join(linkRoot, 'outside')
+  for (const dir of ['sessions', 'storages']) mkdirSync(join(home, dir), { recursive: true })
+  mkdirSync(outside, { recursive: true })
+  const engine = buildEngine({ dshHome: home, workspaceRoots: [outside] })
+  const target = join(outside, 'src', 'index.js')
+
+  const decision = classify('write', [target], { engine, dshState: { running: true } })
+  // Being under a link is not itself a violation: only protected identity is.
+  // (The target need not exist: normalization must not depend on creation order.)
+  assert.equal(decision.classification.protected, false)
+  assert.equal(decision.kind, 'allowed')
+  assert.equal(decision.code, 'workspace-write')
 })
