@@ -6,12 +6,13 @@
  * session — all content here is invented, with placeholder names only.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zstdCompressSync } from 'node:zlib'
 
 import { projectKey } from '../lib/encoding.js'
+import { IS_WINDOWS, normalizeForCompare } from '../lib/paths.js'
 
 /**
  * Create a temporary DSH_HOME.
@@ -77,6 +78,44 @@ export function writeSyntheticSession(input) {
   const file = join(dir, fileName)
   writeFileSync(file, Buffer.concat(frames))
   return { dir, file, header }
+}
+
+/**
+ * Create a directory link that this runtime actually RESOLVES, or return false.
+ *
+ * "does not resolve" must not be skipped silently: on Windows a junction created by
+ * `fs.symlinkSync(..., 'junction')` is followed by `fs.realpathSync.native` but not by
+ * `fs.realpathSync`, and a directory symlink needs Developer Mode. Returning false lets
+ * the caller skip WITH a reason, instead of letting a link-shaped plain directory
+ * masquerade as a passing regression test -- which is how a test quietly stops testing
+ * anything.
+ *
+ * @param {string} target - directory the link should point at.
+ * @param {string} linkPath - path of the link to create.
+ * @returns {boolean} whether a resolvable link now exists at `linkPath`.
+ */
+export function linkThatResolves(target, linkPath) {
+  const attempt = (type) => {
+    try {
+      symlinkSync(target, linkPath, type)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  for (const type of IS_WINDOWS ? ['junction', 'dir'] : ['dir']) {
+    // A leftover entry from a failed attempt would make the next one fail with EEXIST.
+    rmSync(linkPath, { recursive: true, force: true })
+    if (!attempt(type)) continue
+    try {
+      if (normalizeForCompare(realpathSync.native(linkPath)) !== normalizeForCompare(linkPath)) return true
+    } catch {
+      // Unresolvable link: fall through to the next type.
+    }
+  }
+  rmSync(linkPath, { recursive: true, force: true })
+  return false
 }
 
 /**

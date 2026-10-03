@@ -14,7 +14,7 @@ import { join } from 'node:path'
 
 import { buildEngine } from '../lib/index.js'
 import { classify, classifySafely, DECISIONS, detectEmittedScript } from '../lib/rules.js'
-import { IS_WINDOWS, normalizeForCompare } from '../lib/paths.js'
+import { linkThatResolves } from './fixtures.mjs'
 
 const DSH_HOME = join('C:', 'fixture-dsh-home')
 const WORKSPACE = join('C:', 'fixture-dsh-home', 'workspaces', 'proj')
@@ -272,46 +272,7 @@ test('classification is deterministic for identical inputs', () => {
 // macOS, in every case that asserts a denial. The link below recreates that shape
 // on any platform, so the regression cannot come back quietly.
 // ---------------------------------------------------------------------------
-/** Link a directory to `linkPath`, preferring `type` (a junction needs no elevation). */
-function linkDirectory(target, linkPath, type) {
-  try {
-    symlinkSync(target, linkPath, type)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/**
- * Create a directory link that this runtime actually RESOLVES, or return false.
- *
- * "does not resolve" is not a detail that may be skipped silently: on Windows a
- * junction created by `fs.symlinkSync(..., 'junction')` is followed by
- * `fs.realpathSync.native` but not by `fs.realpathSync`, and a directory symlink
- * needs Developer Mode. This check makes the difference visible (the case skips
- * with a reason) instead of letting a link-shaped plain directory masquerade as a
- * passing regression test -- which is how a test quietly stops testing anything.
- *
- * @param {string} target - directory the link should point at.
- * @param {string} linkPath - path of the link to create.
- * @returns {boolean} whether a resolvable link now exists at `linkPath`.
- */
-function linkThatResolves(target, linkPath) {
-  const { realpathSync } = process.getBuiltinModule('node:fs')
-  const types = IS_WINDOWS ? ['junction', 'dir'] : ['dir']
-  for (const type of types) {
-    // A leftover entry from a failed attempt would make the next one fail with EEXIST.
-    rmSync(linkPath, { recursive: true, force: true })
-    if (!linkDirectory(target, linkPath, type)) continue
-    try {
-      if (normalizeForCompare(realpathSync.native(linkPath)) !== normalizeForCompare(linkPath)) return true
-    } catch {
-      // Unresolvable link: fall through to the next type.
-    }
-  }
-  rmSync(linkPath, { recursive: true, force: true })
-  return false
-}
+/** @see linkThatResolves in ./fixtures.mjs for why a link that cannot be created skips. */
 
 test('protected identity survives a symlinked path component (macOS /var shape)', (t) => {
   const realRoot = mkdtempSync(join(tmpdir(), 'dsh-guard-link-'))

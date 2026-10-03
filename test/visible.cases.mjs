@@ -17,9 +17,9 @@ import assert from 'node:assert/strict'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { createComponents, createJournalTool, describeState, formatGuardStatus, formatHistory, readRecent } from '../lib/index.js'
+import { createComponents, createJournalTool, describeState, formatGuardStatus, formatHistory, readRecent, guardInspect } from '../lib/index.js'
 import { probeDshState, probeFileLock, toEngineDshState } from '../lib/hostcheck.js'
-import { makeTempHome } from './fixtures.mjs'
+import { linkThatResolves, makeTempHome, writeRegistry } from './fixtures.mjs'
 
 /** 造一套真实组件（临时 home，零污染）。 */
 function fixture(label = 'visible') {
@@ -244,5 +244,43 @@ test('describeState 暴露面板与工具共同依赖的字段', () => {
     assert.equal(typeof state.journal.chainOk, 'boolean')
   } finally {
     f.cleanup()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 目录联接（junction）必须被识别为 reparse point
+//
+// 这是身份空间审计查出来的真实缺口：Windows 的目录联接**不会**被 `lstat` 报成符号
+// 链接（`isSymbolicLink()===false`，`readlinkSync` 直接 EINVAL），所以只靠 link 标志
+// 判断时，一个被当作工作区根的联接会被描述成普通目录，
+// `reparse-point-in-workspace` 这条 error 级 finding **永远不会触发** —— 而目录联接
+// 正是历史事故的形态（DESIGN.md §1.1 step 4）。现在的判据是身份比较：解析结果与所问
+// 路径不一致，就说明"名字"与"位置"分了家，与平台管它叫什么名字无关。
+// ---------------------------------------------------------------------------
+test('目录联接被识别为 reparse point，并触发 error 级 finding', (t) => {
+  const temp = makeTempHome('junction-detect')
+  const physical = join(temp.home, 'real-workspace')
+  mkdirSync(physical, { recursive: true })
+  const linkPath = join(temp.home, 'linked-workspace')
+  if (!linkThatResolves(physical, linkPath)) {
+    temp.cleanup()
+    t.skip('本运行时建不出可解析的目录链接：该回归无法在此复现')
+    return
+  }
+  try {
+    // 以"注册路径就是那个联接"的形态取证——事故里 agent 干的就是这件事。
+    writeRegistry({ home: temp.home, workspaces: [{ id: 'ws-link', path: linkPath, title: 'linked' }] })
+    const report = guardInspect({ dshHome: temp.home, scope: ['workspaces'], includeHeaders: false })
+    const row = report.workspaces[0]
+
+    assert.equal(row.exists, true)
+    assert.ok(row.kind === 'junction' || row.kind === 'symlink',
+      `联接必须被描述为 reparse point，实际 kind=${row.kind}`)
+    assert.equal(row.realPathMatches, false, '联接的注册路径与真实路径不同，必须如实报告')
+    const finding = report.findings.find((item) => item.code === 'reparse-point-in-workspace')
+    assert.ok(finding !== undefined, '必须产出 reparse-point-in-workspace，而不是当成普通目录放过')
+    assert.equal(finding.severity, 'error')
+  } finally {
+    temp.cleanup()
   }
 })
