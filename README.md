@@ -141,9 +141,13 @@ publish — **that transcript is the honest screenshot substitute**, and `1-pane
 
 | What to capture | Where it comes from |
 |---|---|
-| `1-panel.png` | The sidebar panel or the settings page **after a normal install**, in a session whose workspace contains nothing private |
+| `1-panel.png` | `npm run preview` — serves the plugin's real panel markup on a local port with clearly-labelled fixture data; open the printed URL and screenshot it. (For an unqualified "real install" shot instead, mount the plugin in a profile first.) |
 | `2-blocked-write.png` | The transcript above, or a live `ASK`/`DENY` message from a real install plus the matching `guard_journal` entry |
 | `3-inspect.png` | `dsh-agent-guard inspect --redact` output — redacted, so it can be published as-is |
+
+`npm run preview` injects a visible banner saying the data is a fixture, and the preview keeps
+its fixture `DSH_HOME` in the OS temp directory, so the page shows no private path. Screenshot
+it as a UI preview, not as a live session.
 
 Contributions of a screenshot taken this way are welcome; please redact paths, titles and
 session ids first (`--redact` does it for the CLI view).
