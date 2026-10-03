@@ -122,10 +122,27 @@ also served at `/agent-guard` as a fallback for hosts without a client bundle pa
 follows is the one it asks of others: evidence before claims. A mocked-up UI would be exactly
 the kind of summary-instead-of-evidence this plugin exists to refuse.
 
+Meanwhile the interception itself is reproducible without a live install — the shipped demo
+drives the **same decision path** `tools/pre-execute` uses, and prints whether the tool body
+ran:
+
+```bash
+npm run demo          # or: node checks/demo-blocked-write.mjs
+```
+
+It shows, in order: a direct write to the registry → `DENY`; the same file through a junction
+pointing at `$DSH_HOME` → `DENY`; a rewrite through a project-local `dsh/` junction (the
+incident's shape) → `DENY`; a `Remove-Item` of a session directory → `ASK` with only a command
+digest journaled; and a generated `.bat` that references a protected path → `ASK` as
+`emit-script`. Every case prints `工具主体 未执行`, and the journal's hash chain verifies at the
+end. All paths in its output are temporary-directory fixtures, so the transcript is safe to
+publish — **that transcript is the honest screenshot substitute**, and `1-panel.png` /
+`2-blocked-write.png` below can use a real install later.
+
 | What to capture | Where it comes from |
 |---|---|
 | `1-panel.png` | The sidebar panel or the settings page **after a normal install**, in a session whose workspace contains nothing private |
-| `2-blocked-write.png` | An agent attempting a write to `$DSH_HOME/storages/workspace.json` while DSH is running → the approval/denial message, plus the matching `guard_journal` entry |
+| `2-blocked-write.png` | The transcript above, or a live `ASK`/`DENY` message from a real install plus the matching `guard_journal` entry |
 | `3-inspect.png` | `dsh-agent-guard inspect --redact` output — redacted, so it can be published as-is |
 
 Contributions of a screenshot taken this way are welcome; please redact paths, titles and
