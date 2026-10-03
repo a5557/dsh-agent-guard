@@ -195,9 +195,21 @@ function localValuePatterns() {
     add('20-12', '事故报告为脱敏版', 'fail', 'docs/incident-redacted.md 不存在')
   } else {
     const text = readFileSync(file, 'utf8')
-    const clean = !/[A-Za-z]:\\/.test(text) && !/\bdshplay\b/i.test(text) && !/workbuddy/i.test(text)
+    // 判据必须**结构性**，不能列举具体的工作区名或第三方工具名 ——
+    // 那等于把真实值明文写进会随 npm 包发布的检查脚本（用泄露去检测泄露）。
+    // 这里只用与具体值无关的特征：盘符路径、带连字符的产品化名称、本机账户名。
+    const ownPatterns = localValuePatterns().filter(([re, name]) => name === '本机账户名' || name === '用户主目录名')
+    const structural = [
+      /[A-Za-z]:\\[^\s"'`,;)\]]+/,                    // 未脱敏的盘符路径
+      /[Cc]:\\Users\\/,                                // 用户目录
+      /\b[a-z]+(?:Buddy|Hub|Bot|Desk)\b/i,             // 产品化名称（"XXBuddy" 之类）
+      /\bsession-[0-9a-f]{8}-[0-9a-f]{4}-/i,           // 会话 id
+    ]
+    const hits = structural.filter((re) => re.test(text)).length
+      + ownPatterns.filter(([re]) => re.test(text)).length
+    const clean = hits === 0
     add('20-12', '事故报告为脱敏版', clean ? 'pass' : 'fail',
-      clean ? '全文占位符，无本机路径/工作区名/第三方工具名' : '含真实路径或名称')
+      clean ? '全文占位符，无本机路径/账户名/产品名' : `命中 ${hits} 类未脱敏特征`)
   }
 }
 
