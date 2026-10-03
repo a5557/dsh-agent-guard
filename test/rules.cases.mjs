@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { buildEngine } from '../lib/index.js'
-import { classify, classifySafely, DECISIONS } from '../lib/rules.js'
+import { classify, classifySafely, DECISIONS, detectEmittedScript } from '../lib/rules.js'
 import { IS_WINDOWS, normalizeForCompare } from '../lib/paths.js'
 
 const DSH_HOME = join('C:', 'fixture-dsh-home')
@@ -356,6 +356,18 @@ test('protected identity survives a symlinked path component (macOS /var shape)'
   })
   assert.equal(viaReparsePoint.classification.protected, true, 'a link into protected data must not smuggle a write past the table')
   assert.equal(viaReparsePoint.kind, 'blocked', 'and the write itself must still be denied')
+
+  // A script that renames a session directory is the incident's payload (REL. R4). Its
+  // text is matched against the same table, so the same identity space must apply --
+  // otherwise "generate a .bat that renames sessions" is classified as a plain
+  // workspace write and allowed on a platform where the paths differ in spelling.
+  const emitted = detectEmittedScript({
+    target: join(logicalHome, 'workspaces', 'proj', 'fix.bat'),
+    content: `@echo off\r\nren "${join(logicalHome, 'sessions', '--D-proj-a--')}" "--D-proj-b--"\r\npause\r\n`,
+    engine,
+  })
+  assert.equal(emitted.isEmitScript, true, 'a script referencing protected data must be flagged, never silently allowed')
+  assert.equal(emitted.referenced.length, 1)
 })
 
 test('a linked path that leads OUTSIDE the protected data stays workspace data', (t) => {

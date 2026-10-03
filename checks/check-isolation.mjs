@@ -85,10 +85,13 @@ const profilesBefore = sizes(join(REAL_HOME, 'profiles'))
 // 刻意用 `stdio: 'ignore'`：受限沙箱下子进程的管道式 stdio 会被拒绝（EPERM），
 // 那会把「沙箱限制」误报成「测试失败」。测试退出码由 `npm test` 单独验证。
 let exitCode = 0
+let suiteBlocked = false
 try {
   execFileSync(process.execPath, ['test/run.mjs'], { cwd: ROOT, stdio: 'ignore' })
 } catch (error) {
   exitCode = error.status ?? 1
+  // No status means the child never produced one: the sandbox refused to start it.
+  suiteBlocked = error.status === null || error.status === undefined
 }
 
 const after = sizes(REAL_HOME)
@@ -114,13 +117,19 @@ const checks = [
   { name: 'profiles/ 子树零改动', ok: profilesDiff.created.length === 0 && profilesDiff.deleted.length === 0 && profilesDiff.changed.length === 0, detail: `${profilesDiff.created.length}/${profilesDiff.deleted.length}/${profilesDiff.changed.length}` },
 ]
 
-console.log('测试退出码 :', exitCode)
+// 隔离结论只有在"确实跑过套件"时才有意义，所以把退出码也纳入判据：
+// 0 = 跑过且全绿；非 0 = 跑过但有失败（这属于测试的判定，不是隔离问题，
+// 但绝不能在这里显示成 ✅）；`blocked` = 子进程根本没起来（受限沙箱），
+// 此时本检查的隔离证据仍然成立，只是不再声称"套件已运行"。
+// 原先这里只打印退出码、不参与判定，于是"没跑起来"与"跑过且全绿"长得一模一样。
+console.log('测试退出码 :', exitCode, `(${suiteBlocked ? '子进程未能启动' : exitCode === 0 ? '套件已运行且全绿' : '套件已运行但有失败'})`)
 console.log('\n[实质判据]')
 let allOk = true
 for (const check of checks) {
   if (!check.ok) allOk = false
   console.log(`  ${check.ok ? '✅' : '❌'} ${check.name}${check.ok ? '' : ` — ${check.detail}`}`)
 }
+console.log(`  ${exitCode === 0 ? '✅' : 'ℹ️'} 套件退出码 = 0${exitCode === 0 ? '' : `（实际 ${exitCode}${suiteBlocked ? '：子进程未启动，套件判定见 npm test' : '：测试失败，判定见 npm test'}）`}`)
 
 console.log('\n[参考读数]（真实 home 里 DSH 自身也在写，故不据此判定成败）')
 console.log('  全库新增条目 :', full.created.length)

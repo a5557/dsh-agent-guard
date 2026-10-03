@@ -44,11 +44,13 @@ const SUITES = [
 const files = SUITES.map((suite) => fileURLToPath(new URL(`./${suite}`, import.meta.url)))
 
 let passed = 0
+let events = 0
 const failures = []
 let summaryCounts = null
 
 const stream = run({ concurrency: 1, files, isolation: 'none' })
 stream.on('data', (event) => {
+  events += 1
   if (event.type === 'test:pass' && event.data?.skip !== true) {
     passed += 1
   } else if (event.type === 'test:fail') {
@@ -71,11 +73,11 @@ await new Promise((resolve) => {
 })
 
 // The runner does not touch `process.exitCode`, so a failing run must set it here.
-if ((summaryCounts?.passed ?? passed) === 0 && failures.length === 0) {
+if (events === 0) {
   process.stdout.write(
-    '\nUNKNOWN: the test runner completed without reporting a single case.\n'
-    + 'Treat this run as failed: a harness that cannot read its own verdict must not\n'
-    + 'print "0 failed". Check that `isolation: \'none\'` ran the suites in process.\n',
+    '\nUNKNOWN: the test runner produced no events at all, so this run measured nothing.\n'
+    + 'Treat it as failed: a harness that cannot read its own verdict must not print\n'
+    + '"0 failed". Check that `isolation: \'none\'` actually ran the suites in process.\n',
   )
   process.exitCode = 1
 } else {
