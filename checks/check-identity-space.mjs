@@ -13,7 +13,7 @@
 //
 // 动态半场在没有链接能力的环境（受限沙箱、无 Developer Mode 的 Windows）会显式跳过并说明，
 // 不会伪装成通过；静态半场在任何环境都跑。
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -71,12 +71,25 @@ check('比对路径的模块都走共享原语（rules.js / inspect.js）',
 say('')
 say('[2] 动态：目录链接下的身份一致性')
 
-const realRoot = mkdtempSync(join(tmpdir(), 'idspace-'))
-const linkRoot = `${realRoot}-link`
+// 临时根先解析到物理路径，再在它旁边造一个**逻辑别名**。这一步是必须的，而且上一版就栽在
+// 这里：macOS runner 的 `TMPDIR` 已经是 `/private/var/...`（规范形），所以
+// `${tmpdir}/x-link -> ${tmpdir}/x` 两侧拼写本来就一样，`physicalHome` 其实并不"物理"，
+// 于是断言在**没有真正制造出分歧**的情况下失败（本地 Windows 的 %TEMP% 没有这层间接，
+// 所以本地永远绿）。修法：先把 realRoot 解析到物理形，`physical*` 一律由它派生；
+// "逻辑 vs 物理"的分歧只由我们自己建的那个链接引入，环境差异不再参与判定。
+const tmpRoot = mkdtempSync(join(tmpdir(), 'idspace-'))
+const realRoot = realpathSync.native(tmpRoot)
+const linkRoot = `${tmpRoot}-link`
 // 能力探测必须发生在**任何断言之前**：如果这个链接解析不到目标，那这一整套
 // "两种拼写判成同一个身份"的断言都会在什么都没验证的情况下通过——本检查的第一版
 // 就在 CI 上这样绿过一次（macOS/Windows runner 建链接被拒），所以现在一律显式跳过。
 const linked = linkThatResolves(realRoot, linkRoot)
+// 诊断行是有意留下的：这个检查在 CI 上出过两次"本地绿、远端红"的事故，而当时无法从输出
+// 判断它到底走了哪条分支。判定依据必须自证，否则下一次还是要靠猜。
+say(`  诊断：tmpRoot=${tmpRoot}`)
+say(`  诊断：realRoot=${realRoot}${realRoot === tmpRoot ? '（本机 tmpdir 已是规范形）' : '（本机 tmpdir 含链接，已解析）'}`)
+say(`  诊断：linkRoot=${linkRoot} 可解析链接=${linked}`)
+if (linked) say(`  诊断：realpath(linkRoot)=${realpathSync.native(linkRoot)}  tmpdir=${tmpdir()}`)
 
 if (!linked) {
   notes.push('本环境建不出可解析的目录链接：动态半场已跳过（静态半场仍然有效）')
@@ -94,15 +107,29 @@ if (!linked) {
   const physicalTarget = join(physicalHome, 'storages', 'workspace.json')
   const logicalTarget = join(logicalHome, 'storages', 'workspace.json')
 
+  say(`  诊断：physicalHome=${physicalHome}`)
+  say(`  诊断： logicalHome=${logicalHome}`)
+  say(`  诊断：physicalTarget=${physicalTarget}`)
+  say(`  诊断： describePath(logicalTarget).realPath=${describePath(logicalTarget).realPath}`)
+  say(`  诊断： resolvePhysical(logicalTarget)=${resolvePhysical(logicalTarget)}`)
+  say(`  诊断： engine.dshHome=${engine.dshHome}`)
+  say(`  诊断： 表内基路径=${engine.protected.map((entry) => entry.compiled.base).join(' | ')}`)
+  // 分歧必须真的存在，否则下面的断言什么都没测到（这正是上一版在 macOS 上的问题）。
+  check('链接确实制造出了"两种拼写"',
+    normalizeForCompare(logicalHome) !== normalizeForCompare(physicalHome)
+    && normalizeForCompare(resolvePhysical(logicalHome)) === normalizeForCompare(physicalHome),
+    `logicalHome=${logicalHome} physicalHome=${physicalHome} resolvePhysical=${resolvePhysical(logicalHome)}`)
+
   check('describePath 解析到物理文件',
     describePath(logicalTarget).realPath !== null
     && normalizeForCompare(describePath(logicalTarget).realPath) === normalizeForCompare(physicalTarget),
-    String(describePath(logicalTarget).realPath))
+    `期望 ${physicalTarget}，实际 ${describePath(logicalTarget).realPath}`)
   check('resolvePhysical = 将来真正被写的那个文件',
     normalizeForCompare(resolvePhysical(logicalTarget)) === normalizeForCompare(physicalTarget),
-    resolvePhysical(logicalTarget))
+    `期望 ${physicalTarget}，实际 ${resolvePhysical(logicalTarget)}`)
   check('resolveReal 与 resolvePhysical 对已存在路径一致',
-    normalizeForCompare(resolveReal(logicalHome)) === normalizeForCompare(physicalHome), resolveReal(logicalHome))
+    normalizeForCompare(resolveReal(logicalHome)) === normalizeForCompare(physicalHome),
+    `期望 ${physicalHome}，实际 ${resolveReal(logicalHome)}`)
   check('受保护路径表编译在物理空间',
     engine.protected.some((entry) => normalizeForCompare(entry.compiled.base) === normalizeForCompare(join(physicalHome, 'storages'))),
     '表里没有物理基路径')
