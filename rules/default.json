@@ -1,0 +1,84 @@
+{
+  "$comment": "dsh-agent-guard default rule set. Pure data: no code, no absolute paths, no personal workspace names (DESIGN.md §19.6). Patterns support $DSH_HOME and <workspace> placeholders; a trailing /** means 'this directory and everything below'.",
+  "ruleSetVersion": 1,
+  "protected": [
+    {
+      "id": "dsh-sessions",
+      "pattern": "$DSH_HOME/sessions/**",
+      "label": "DSH 会话存储（目录名 = 路径编码键）",
+      "budget": "core-data",
+      "why": "会话目录名就是工作区路径的编码键；成批改名或删除会让注册路径与磁盘布局错位（DESIGN.md R1）"
+    },
+    {
+      "id": "dsh-storages",
+      "pattern": "$DSH_HOME/storages/**",
+      "label": "DSH 工作区注册表与投影缓存",
+      "budget": "core-data",
+      "why": "workspace.json 由应用自己持有并重写；外部改写会让注册路径与真实路径分裂"
+    },
+    {
+      "id": "dsh-profiles",
+      "pattern": "$DSH_HOME/profiles/**",
+      "label": "DSH profile（插件与配置）",
+      "budget": "core-data",
+      "why": "profile 决定应用如何启动；改坏它会让应用起不来"
+    },
+    {
+      "id": "dsh-credentials",
+      "pattern": "$DSH_HOME/.credentials.yaml",
+      "label": "DSH 凭据文件（只读，绝不写）",
+      "budget": "core-data",
+      "why": "凭据文件只检查存在与权限元数据，绝不读取内容，更不写入（DESIGN.md §10.3）"
+    },
+    {
+      "id": "guard-own-data",
+      "pattern": "$DSH_HOME/agent-guard/**",
+      "label": "agent-guard 自身数据（日志与回滚点）",
+      "budget": "core-data",
+      "why": "自身日志与快照是复盘依据，必须防篡改（DESIGN.md §10.2）"
+    },
+    {
+      "id": "workspace-dsh-meta",
+      "pattern": "<workspace>/**/.dsh/**",
+      "label": "工作区内的 DSH 元数据目录",
+      "budget": "core-data",
+      "why": "工作区里的 .dsh 同属应用私有状态，不是用户项目内容"
+    }
+  ],
+  "boundaries": {
+    "protectWorkspaceRoots": true,
+    "workspaceMetaDirName": ".dsh",
+    "$comment": "Workspace roots themselves are protected for link/rename actions: creating a junction on a workspace root is what split identity in the incident."
+  },
+  "actions": {
+    "read": { "decision": "allowed", "journal": false },
+    "link": { "decision": "require-confirmation" },
+    "write": { "decision": "require-justification", "backup": true },
+    "rename-many": { "decision": "blocked" },
+    "delete": { "decision": "blocked" },
+    "kill": { "decision": "require-confirmation" },
+    "exec-script": { "decision": "require-confirmation" },
+    "emit-script": { "decision": "require-confirmation", "warn": true }
+  },
+  "maxRenamesBeforeReject": 2,
+  "unknownActionDecision": "require-confirmation",
+  "$comment-failure": "Engine faults must degrade to allowed-with-backup + engine-fault warning, never to an unbacked allow (DESIGN.md §6.6).",
+  "engineFaultDecision": "allowed-with-backup",
+  "snapshots": {
+    "keepRecent": 30,
+    "keepHourly": 24,
+    "keepDaily": 14,
+    "$comment": "Retention only ever deletes this plugin's own snapshots (DESIGN.md §8)."
+  },
+  "workspaceHealth": {
+    "$comment": "Finding codes are stable identifiers: the panel and tests match on them (DESIGN.md §7.2).",
+    "codes": [
+      "path-as-identity-mismatch",
+      "reparse-point-in-workspace",
+      "session-header-unreadable",
+      "session-header-incomplete",
+      "unregistered-subagent-records",
+      "registry-unreadable"
+    ]
+  }
+}

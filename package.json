@@ -1,0 +1,61 @@
+{
+  "name": "dsh-agent-guard",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness guardrail plugin: evidence-first read-only inspection (v0). One command captures authoritative state - workspace registration, session identity headers, directory layout, host running state - so a count difference is never mistaken for data loss. No network, no telemetry, zero runtime dependencies.",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "security",
+    "forensics",
+    "inspection",
+    "guardrail"
+  ],
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "bin": {
+    "dsh-agent-guard": "./bin/guard.mjs"
+  },
+  "files": [
+    "lib/",
+    "bin/",
+    "rules/",
+    "checks/",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node test/run.mjs",
+    "inspect": "node bin/guard.mjs inspect",
+    "checks": "node checks/check-ci.mjs && node checks/check-encoding.mjs && node checks/check-readonly.mjs && node checks/check-redaction.mjs && node checks/check-isolation.mjs && node checks/check-coverage.mjs && node checks/check-release-checklist.mjs",
+    "lint": "node --check lib/index.js && node --check lib/inspect.js && node --check lib/rules.js && node --check lib/paths.js && node --check lib/sessionlog.js && node --check lib/hostcheck.js && node --check lib/encoding.js && node --check lib/store.js && node --check lib/journal.js && node --check lib/backup.js && node --check lib/guard.js && node --check lib/snapshot.js && node --check lib/config.js && node --check lib/panel.js && node --check lib/client.js && node --check bin/guard.mjs",
+    "prepublishOnly": "npm run lint && npm test"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "license": "MIT"
+}

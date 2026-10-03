@@ -1,0 +1,127 @@
+# ============================================================================
+# 三平台 CI —— 对应 DESIGN.md §12.3「CI：node --test 或 vitest；三平台矩阵」
+#
+# 设计要点：
+#   - **零安装**：本包没有运行时依赖，也没有 devDependencies，所以不跑 npm install。
+#     这同时是"零依赖"承诺的一个可验证后果。
+#   - **矩阵**：ubuntu / windows / macos，因为 Windows 专有探测（junction、进程、端口）
+#     在其他平台应当**降级为"不支持"而不是报错**（§11），需要有平台跑着证明这点。
+#   - **两道闸门**：lint（语法）+ test（160 个用例），并在 Linux 上额外跑自检脚本
+#     （check-isolation 会读真实 $DSH_HOME；CI 里没有真实 home，所以它会自行跳过）。
+#   - Node 版本取 22 与 24：22 是 engines 下限，24 是当前开发版本。
+# ============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['22', '24']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Show environment
+        run: node --version && npm --version
+
+      # 没有依赖可装：本包零运行时依赖、零 devDependencies。
+      - name: Lint (syntax check every shipped file)
+        run: npm run lint
+
+      - name: Test (in-process runner, temporary DSH_HOME only)
+        run: npm test
+
+      - name: Checks (read-only audit, encoding, redaction)
+        run: npm run checks
+        # check-isolation.mjs 在没有真实 $DSH_HOME 的环境里会自行跳过（退出 0），
+        # 因此这一步在三平台都能跑。
+
+  pack:
+    name: Package contents
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # §20：npm pack 内容必须最小化——无 node_modules、无本地路径、无私有文件。
+      - name: Verify the tarball stays minimal
+        run: |
+          npm pack --dry-run --json > pack.json
+          node -e '
+            const report = JSON.parse(require("node:fs").readFileSync("pack.json", "utf8"))[0];
+            const names = report.files.map((file) => file.path);
+            const forbidden = [
+              [/^node_modules\//, "node_modules must never ship"],
+              [/^\.verify\//, ".verify scratch must never ship"],
+              [/^test\//, "tests are not part of the published package"],
+              [/^DESIGN\.md$/, "DESIGN.md is the author internal edition, not a shipped file"],
+              [/\.log$|\.bak$|\.tmp$/, "no logs, backups or temp files"],
+            ];
+            const problems = [];
+            for (const [pattern, message] of forbidden) {
+              for (const name of names) if (pattern.test(name)) problems.push(`${name}: ${message}`);
+            }
+            // 必需的产物必须在包里。
+            for (const required of ["package.json", "cordis.patch.yml", "lib/index.js", "lib/client.js", "rules/default.json"]) {
+              if (!names.includes(required)) problems.push(`${required}: required file missing from the tarball`);
+            }
+            console.log(`${names.length} files, ${(report.size / 1024).toFixed(1)} kB`);
+            if (problems.length > 0) { console.error(problems.join("\n")); process.exit(1); }
+          '
+
+  no-network:
+    name: No network capability in shipped code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # §19.7「零网络」不是口号：在发布产物里直接搜网络 API 与 HTTP 客户端依赖。
+      - name: Assert no network usage
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RnE "require\(['\"](node:)?(http|https|net|dns|tls)['\"]\)|from ['\"](node:)?(http|https|net|dns|tls)['\"]|fetch\(|XMLHttpRequest|axios|node-fetch|undici" lib/ bin/; then
+            echo "::error::network API found in shipped code — the zero-network promise is broken"
+            exit 1
+          fi
+          echo "no network API in lib/ or bin/"
+
+      - name: Assert zero runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e '
+            const m = JSON.parse(require("node:fs").readFileSync("package.json", "utf8"));
+            const deps = Object.keys(m.dependencies ?? {});
+            const optional = Object.keys(m.optionalDependencies ?? {});
+            if (deps.length > 0 || optional.length > 0) {
+              console.error("runtime dependencies present:", [...deps, ...optional].join(", "));
+              process.exit(1);
+            }
+            console.log("zero runtime dependencies");
+          '

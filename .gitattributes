@@ -1,0 +1,46 @@
+# ============================================================================
+# 行尾规范化 —— 首次提交前必须固定，否则跨平台会产生"内容相同但哈希不同"的问题
+#
+# 背景：作者本机 `core.autocrlf=true`，签出时会把 LF 改写成 CRLF。
+# 对本项目来说这不只是风格问题：
+#   - `lib/backup.js` 用文件内容的 SHA-256 做回滚点完整性校验，
+#     行尾漂移会让同一份内容在不同平台上算出不同哈希；
+#   - CI 跑 ubuntu / windows / macos 三平台（.github/workflows/ci.yml），
+#     行尾不一致会让"在本地通过、在 CI 失败"变成常态。
+#
+# 因此：默认全部文本文件按 LF 存储与签出，与平台无关。
+# ============================================================================
+
+# 默认：自动识别文本文件，仓库内与工作区都用 LF
+* text=auto eol=lf
+
+# ---- 显式声明为文本（避免被当成二进制而跳过行尾处理）----
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+
+# ---- Windows 专用脚本：CRLF 更符合该平台的工具链预期 ----
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# ---- 明确的二进制：不做任何转换 ----
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.zst   binary
+*.zstd  binary
+*.tgz   binary
+
+# ---- git 归并策略 ----
+# package.json 的锁文件与注册表类 JSON 容易冲突，用 union 归并减少无意义冲突
+pnpm-lock.yaml  merge=union
+
+# ---- 语言统计：把生成物排除，避免虚高 ----
+# （本项目零构建，此处仅示范；如需可加 paths）
